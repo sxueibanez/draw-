@@ -53,6 +53,11 @@
           <button type="button" class="active" id="draw-mode" aria-pressed="true">绘制</button>
           <button type="button" id="erase-mode" aria-pressed="false">擦除</button>
         </div>
+        <div class="group" aria-label="画布缩放">
+          <button type="button" id="zoom-out" aria-label="缩小画布" title="缩小画布">−</button>
+          <button type="button" id="zoom-reset" title="恢复 100% 缩放">100%</button>
+          <button type="button" id="zoom-in" aria-label="放大画布" title="放大画布">＋</button>
+        </div>
         <div class="group">
           <button type="button" id="undo" title="撤销（Ctrl+Z）">撤销</button>
           <button type="button" id="redo" title="重做（Ctrl+Shift+Z）">重做</button>
@@ -87,7 +92,7 @@
     const canvas = document.querySelector("#canvas");
     const output = document.querySelector("#output");
     const status = document.querySelector("#status");
-    let width = 48, height = 20, pixels = new Uint8Array(width * height);
+    let width = 48, height = 20, zoom = 1, pixels = new Uint8Array(width * height);
     let undoStack = [], redoStack = [], mode = "draw", stroke = null;
 
     function charAt(i) { return String.fromCodePoint(base + pixels[i]); }
@@ -171,6 +176,16 @@
       document.querySelector("#undo").disabled = !undoStack.length;
       document.querySelector("#redo").disabled = !redoStack.length;
     }
+    function setZoom(next) {
+      zoom = Math.max(0.5, Math.min(2, Math.round(next * 10) / 10));
+      const baseSize = matchMedia("(max-width: 620px)").matches ? 21 : 24;
+      canvas.style.fontSize = zoom === 1 ? "" : `${baseSize * zoom}px`;
+      document.querySelector("#zoom-reset").textContent = `${Math.round(zoom * 100)}%`;
+      document.querySelector("#zoom-out").disabled = zoom === 0.5;
+      document.querySelector("#zoom-in").disabled = zoom === 2;
+      status.textContent = `画布缩放：${Math.round(zoom * 100)}%。`;
+    }
+    window.addEventListener("resize", () => { if (zoom !== 1) setZoom(zoom); });
     function undo() {
       finishStroke();
       if (!undoStack.length) return;
@@ -224,6 +239,9 @@
     });
     document.querySelector("#draw-mode").addEventListener("click", () => setMode("draw"));
     document.querySelector("#erase-mode").addEventListener("click", () => setMode("erase"));
+    document.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - 0.1));
+    document.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + 0.1));
+    document.querySelector("#zoom-reset").addEventListener("click", () => setZoom(1));
     function setMode(next) {
       mode = next;
       for (const [id, value] of [["#draw-mode", "draw"], ["#erase-mode", "erase"]]) {
