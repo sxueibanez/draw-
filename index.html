@@ -27,12 +27,17 @@
     .hint { margin: 12px 2px 0; }
     .status { min-height: 20px; margin-top: 8px; }
     .canvas-wrap { overflow: auto; max-height: 62vh; background: #fafbfc; border: 1px solid #e8eaf0; border-radius: 10px; padding: 16px; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, .75fr); gap: 24px; align-items: start; }
+    .measurements { padding: 18px 8px; font-size: 20px; }
+    .measurements p { margin: 0 0 10px; }
+    .measurements strong { font-variant-numeric: tabular-nums; }
+    .qq-limit { margin-top: 20px !important; color: #737784; font-size: 16px; }
     #canvas { display: grid; width: max-content; font-size: 24px; touch-action: none; cursor: crosshair; user-select: none; }
     .cell { width: 1em; height: 1.5em; display: grid; place-items: center; border-right: 1px solid #e9ebf0; border-bottom: 1px solid #e9ebf0; color: #303c76; font: 1em/1 "Segoe UI Symbol", "Apple Braille", "DejaVu Sans", monospace; }
     #output { display: block; width: 100%; min-height: 150px; resize: vertical; border: 1px solid #e5e7ec; border-radius: 9px; padding: 12px; color: #303c76; font: 16px/1.5 "Segoe UI Symbol", "Apple Braille", "DejaVu Sans", monospace; white-space: pre; overflow: auto; }
     .output-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
     h2 { margin: 0; font-size: 16px; }
-    @media (max-width: 620px) { body { padding: 24px 12px; } section { padding: 14px; } .spacer { display: none; } #canvas { font-size: 21px; } }
+    @media (max-width: 620px) { body { padding: 24px 12px; } section { padding: 14px; } .spacer { display: none; } #canvas { font-size: 21px; } .workspace { grid-template-columns: 1fr; gap: 8px; } .measurements { padding: 4px 2px; } }
   </style>
 </head>
 <body>
@@ -69,10 +74,15 @@
       <div class="status" id="status" role="status" aria-live="polite"></div>
     </section>
 
-    <section>
+    <section class="workspace">
       <div class="canvas-wrap">
         <div id="canvas" role="grid" tabindex="0" aria-label="Braille 绘图画布"></div>
       </div>
+      <aside class="measurements" aria-label="绘图尺寸">
+        <p>宽：<strong id="content-width">0</strong></p>
+        <p>长：<strong id="content-height">0</strong></p>
+        <p class="qq-limit">QQ 一行最多容纳 22 个字符。</p>
+      </aside>
     </section>
 
     <section>
@@ -101,7 +111,7 @@
         Array.from({ length: width }, (_, x) => charAt(y * width + x)).join("")
       ).join("\n");
     }
-    function trimmedTextArt() {
+    function contentBounds() {
       let left = width, top = height, right = -1, bottom = -1;
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
         if (pixels[y * width + x]) {
@@ -109,10 +119,20 @@
           top = Math.min(top, y); bottom = Math.max(bottom, y);
         }
       }
-      if (right < 0) return "";
+      return right < 0 ? null : { left, top, right, bottom };
+    }
+    function trimmedTextArt() {
+      const bounds = contentBounds();
+      if (!bounds) return "";
+      const { left, top, right, bottom } = bounds;
       return Array.from({ length: bottom - top + 1 }, (_, row) =>
         Array.from({ length: right - left + 1 }, (_, col) => charAt((top + row) * width + left + col)).join("")
       ).join("\n");
+    }
+    function updateContentSize() {
+      const bounds = contentBounds();
+      document.querySelector("#content-width").textContent = bounds ? bounds.right - bounds.left + 1 : 0;
+      document.querySelector("#content-height").textContent = bounds ? bounds.bottom - bounds.top + 1 : 0;
     }
     function renderAll() {
       canvas.style.gridTemplateColumns = `repeat(${width}, 1em)`;
@@ -127,6 +147,7 @@
       }
       canvas.replaceChildren(cells);
       output.value = textArt();
+      updateContentSize();
       document.querySelector("#undo").disabled = !undoStack.length;
       document.querySelector("#redo").disabled = !redoStack.length;
     }
@@ -169,6 +190,7 @@
         redoStack = [];
         output.value = textArt();
         renderHistoryButtons();
+        updateContentSize();
       }
       stroke = null;
     }
