@@ -17,7 +17,9 @@
     .group { display: flex; align-items: end; gap: 8px; }
     label { display: grid; gap: 4px; color: #737784; font-size: 12px; }
     input { width: 76px; height: 38px; border: 1px solid #dfe1e7; border-radius: 8px; padding: 0 10px; font: inherit; }
+    select { height: 38px; border: 1px solid #dfe1e7; border-radius: 8px; background: white; padding: 0 10px; font: inherit; }
     button { height: 38px; border: 1px solid #dfe1e7; border-radius: 8px; background: white; color: inherit; padding: 0 13px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
     button:hover { border-color: #a9aebb; background: #f8f9fb; }
     button:focus-visible, input:focus-visible, textarea:focus-visible, #canvas:focus-visible { outline: 3px solid #a8b8ff; outline-offset: 2px; }
     button.primary, button.active { background: #303c76; color: white; border-color: #303c76; }
@@ -27,6 +29,8 @@
     .hint { margin: 12px 2px 0; }
     .status { min-height: 20px; margin-top: 8px; }
     .canvas-wrap { overflow: auto; max-height: 62vh; background: #fafbfc; border: 1px solid #e8eaf0; border-radius: 10px; padding: 16px; }
+    .canvas-stage { position: relative; width: max-content; }
+    #preview { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
     .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, .75fr); gap: 24px; align-items: start; }
     .measurements { padding: 18px 8px; font-size: 20px; }
     .measurements p { margin: 0 0 10px; }
@@ -37,6 +41,13 @@
     #output { display: block; width: 100%; min-height: 150px; resize: vertical; border: 1px solid #e5e7ec; border-radius: 9px; padding: 12px; color: #303c76; font: 16px/1.5 "Segoe UI Symbol", "Apple Braille", "DejaVu Sans", monospace; white-space: pre; overflow: auto; }
     .output-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
     h2 { margin: 0; font-size: 16px; }
+    :root[data-theme="dark"] { color-scheme: dark; color: #e8eaf2; background: #171923; }
+    [data-theme="dark"] section { background: #222531; border-color: #3a3e4c; box-shadow: 0 5px 20px #0003; }
+    [data-theme="dark"] header p, [data-theme="dark"] label, [data-theme="dark"] .hint, [data-theme="dark"] .status, [data-theme="dark"] .qq-limit { color: #adb2c2; }
+    [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] button:not(.active):not(.primary), [data-theme="dark"] #output { background: #292d3a; color: #e8eaf2; border-color: #454b5d; }
+    [data-theme="dark"] .canvas-wrap { background: #1b1e28; border-color: #353a49; }
+    [data-theme="dark"] .cell { color: #aab8ff; border-color: #313646; }
+    [data-theme="dark"] button:not(:disabled):not(.active):not(.primary):hover { background: #34394a; border-color: #62697c; }
     @media (max-width: 620px) { body { padding: 24px 12px; } section { padding: 14px; } .spacer { display: none; } #canvas { font-size: 21px; } .workspace { grid-template-columns: 1fr; gap: 8px; } .measurements { padding: 4px 2px; } }
   </style>
 </head>
@@ -58,11 +69,27 @@
           <button type="button" class="active" id="draw-mode" aria-pressed="true">绘制</button>
           <button type="button" id="erase-mode" aria-pressed="false">擦除</button>
         </div>
+        <label>图形
+          <select id="shape-tool" aria-label="选择图形">
+            <option value="free">自由绘制</option>
+            <option value="rect">矩形</option>
+            <option value="ellipse">椭圆</option>
+            <option value="triangle">三角形</option>
+            <option value="line">直线</option>
+            <option value="star">五角星</option>
+            <option value="heart">心形</option>
+          </select>
+        </label>
+        <div class="group" aria-label="图形样式">
+          <button type="button" class="active" id="shape-outline" aria-pressed="true">描边</button>
+          <button type="button" id="shape-fill" aria-pressed="false">填充</button>
+        </div>
         <div class="group" aria-label="画布缩放">
           <button type="button" id="zoom-out" aria-label="缩小画布" title="缩小画布">−</button>
           <button type="button" id="zoom-reset" title="恢复 100% 缩放">100%</button>
           <button type="button" id="zoom-in" aria-label="放大画布" title="放大画布">＋</button>
         </div>
+        <button type="button" id="theme-toggle" aria-label="切换到夜间模式" aria-pressed="false">🌙 夜间模式</button>
         <div class="group">
           <button type="button" id="undo" title="撤销（Ctrl+Z）">撤销</button>
           <button type="button" id="redo" title="重做（Ctrl+Shift+Z）">重做</button>
@@ -70,13 +97,16 @@
           <button type="button" class="primary" id="copy">复制字符画</button>
         </div>
       </form>
-      <p class="hint">拖动绘制；按住 Ctrl 可临时擦除。快捷键：Ctrl+Z 撤销，Ctrl+Shift+Z 重做。</p>
+      <p class="hint">拖动画笔绘制；选择图形后拖动可实时预览，松开完成。按住 Ctrl 可临时擦除。快捷键：Ctrl+Z 撤销，Ctrl+Shift+Z 重做。</p>
       <div class="status" id="status" role="status" aria-live="polite"></div>
     </section>
 
     <section class="workspace">
       <div class="canvas-wrap">
-        <div id="canvas" role="grid" tabindex="0" aria-label="Braille 绘图画布"></div>
+        <div class="canvas-stage">
+          <div id="canvas" role="grid" tabindex="0" aria-label="Braille 绘图画布"></div>
+          <svg id="preview" aria-hidden="true" preserveAspectRatio="none"></svg>
+        </div>
       </div>
       <aside class="measurements" aria-label="绘图尺寸">
         <p>宽：<strong id="content-width">0</strong></p>
@@ -100,10 +130,11 @@
     const base = 0x2800;
     const bits = [[1, 8], [2, 16], [4, 32], [64, 128]];
     const canvas = document.querySelector("#canvas");
+    const preview = document.querySelector("#preview");
     const output = document.querySelector("#output");
     const status = document.querySelector("#status");
     let width = 48, height = 20, zoom = 1, pixels = new Uint8Array(width * height);
-    let undoStack = [], redoStack = [], mode = "draw", stroke = null;
+    let undoStack = [], redoStack = [], mode = "draw", stroke = null, shapeFilled = false;
 
     function charAt(i) { return String.fromCodePoint(base + pixels[i]); }
     function textArt() {
@@ -136,6 +167,8 @@
     }
     function renderAll() {
       canvas.style.gridTemplateColumns = `repeat(${width}, 1em)`;
+      preview.setAttribute("viewBox", `0 0 ${width * 2} ${height * 4}`);
+      preview.replaceChildren();
       const cells = document.createDocumentFragment();
       for (let i = 0; i < pixels.length; i++) {
         const cell = document.createElement("span");
@@ -177,14 +210,108 @@
         if (twice <= dx) { error += dx; y += sy; }
       }
     }
+    function shapeBounds(start, end) {
+      return { left: Math.min(start[0], end[0]), right: Math.max(start[0], end[0]), top: Math.min(start[1], end[1]), bottom: Math.max(start[1], end[1]) };
+    }
+    function polygonPoints(shape, { left, right, top, bottom }) {
+      if (shape === "triangle") return [[(left + right) / 2, top], [left, bottom], [right, bottom]];
+      if (shape === "star") {
+        const cx = (left + right) / 2, cy = (top + bottom) / 2;
+        return Array.from({ length: 10 }, (_, i) => {
+          const radius = i % 2 ? 0.42 : 1, angle = -Math.PI / 2 + i * Math.PI / 5;
+          return [cx + (right - left) / 2 * radius * Math.cos(angle), cy + (bottom - top) / 2 * radius * Math.sin(angle)];
+        });
+      }
+      return Array.from({ length: 64 }, (_, i) => {
+        const t = i * 2 * Math.PI / 64;
+        const x = 16 * Math.sin(t) ** 3;
+        const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+        return [left + (x + 16) / 32 * (right - left), top + (12 - y) / 29 * (bottom - top)];
+      });
+    }
+    function pointInPolygon(points, x, y) {
+      let inside = false;
+      for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+        const [xi, yi] = points[i], [xj, yj] = points[j];
+        if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside;
+    }
+    function drawPolygon(points, bounds, filled, erase) {
+      if (filled) for (let y = bounds.top; y <= bounds.bottom; y++) for (let x = bounds.left; x <= bounds.right; x++) {
+        if (pointInPolygon(points, x, y)) setDot(x, y, erase);
+      }
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+        drawLine(a.map(Math.round), b.map(Math.round), erase);
+      }
+    }
+    function drawShape(start, end, shape, filled, erase) {
+      const bounds = shapeBounds(start, end);
+      const { left, right, top, bottom } = bounds;
+      if (shape === "line") { drawLine(start, end, erase); return; }
+      if (shape === "rect") {
+        for (let y = top; y <= bottom; y++) for (let x = left; x <= right; x++) {
+          if (filled || x === left || x === right || y === top || y === bottom) setDot(x, y, erase);
+        }
+      } else if (shape === "ellipse") {
+        const rx = (right - left) / 2, ry = (bottom - top) / 2;
+        if (!rx || !ry) { drawLine(start, end, erase); return; }
+        const cx = (left + right) / 2, cy = (top + bottom) / 2;
+        if (filled) {
+          for (let y = top; y <= bottom; y++) for (let x = left; x <= right; x++) {
+            if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1) setDot(x, y, erase);
+          }
+        } else {
+          const steps = Math.max(12, Math.ceil(2 * Math.PI * Math.max(rx, ry) * 2));
+          let previous = [Math.round(cx + rx), Math.round(cy)];
+          for (let i = 1; i <= steps; i++) {
+            const angle = 2 * Math.PI * i / steps;
+            const point = [Math.round(cx + rx * Math.cos(angle)), Math.round(cy + ry * Math.sin(angle))];
+            drawLine(previous, point, erase);
+            previous = point;
+          }
+        }
+      } else drawPolygon(polygonPoints(shape, bounds), bounds, filled, erase);
+    }
+    function showShapePreview(start, end) {
+      if (!stroke || stroke.shape === "free") return;
+      const bounds = shapeBounds(start, end), { left, right, top, bottom } = bounds;
+      let path;
+      if (stroke.shape === "line") path = `M${start[0]} ${start[1]} L${end[0]} ${end[1]}`;
+      else if (stroke.shape === "rect") path = `M${left} ${top} H${right} V${bottom} H${left} Z`;
+      else if (stroke.shape === "ellipse") {
+        const rx = (right - left) / 2, ry = (bottom - top) / 2, cx = (left + right) / 2, cy = (top + bottom) / 2;
+        path = !rx || !ry ? `M${start[0]} ${start[1]} L${end[0]} ${end[1]}` : `M${cx - rx} ${cy} A${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`;
+      } else {
+        const points = polygonPoints(stroke.shape, bounds);
+        path = `M${points.map(point => point.join(" ")).join(" L")} Z`;
+      }
+      const element = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      element.setAttribute("d", path);
+      element.setAttribute("transform", "translate(.5 .5)");
+      const dark = document.documentElement.dataset.theme === "dark";
+      element.setAttribute("fill", stroke.filled && stroke.shape !== "line" ? (dark ? "rgba(170,184,255,.25)" : "rgba(48,60,118,.18)") : "none");
+      element.setAttribute("stroke", stroke.erase ? "#cf596c" : dark ? "#aab8ff" : "#536be5");
+      element.setAttribute("stroke-width", "0.22");
+      element.setAttribute("stroke-linecap", "round");
+      element.setAttribute("stroke-linejoin", "round");
+      preview.replaceChildren(element);
+    }
+    function clearShapePreview() {
+      preview.replaceChildren();
+    }
     function pointAt(event) {
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left, y = event.clientY - rect.top;
       if (x < 0 || y < 0 || x >= rect.width || y >= rect.height) return null;
       return [Math.floor(x / rect.width * width * 2), Math.floor(y / rect.height * height * 4)];
     }
-    function finishStroke() {
+    function finishStroke(endPoint) {
       if (!stroke) return;
+      const current = stroke;
+      if (current.shape !== "free") drawShape(current.start, endPoint || current.point || current.start, current.shape, current.filled, current.erase);
+      clearShapePreview();
       if (stroke.before.some((value, i) => value !== pixels[i])) {
         remember(undoStack, stroke.before);
         redoStack = [];
@@ -229,18 +356,22 @@
       if (!point) return;
       event.preventDefault();
       canvas.setPointerCapture(event.pointerId);
-      stroke = { pointerId: event.pointerId, before: pixels.slice(), point, erase: mode === "erase" || event.ctrlKey };
-      drawLine(point, point, stroke.erase);
+      const shape = document.querySelector("#shape-tool").value;
+      stroke = { pointerId: event.pointerId, before: pixels.slice(), point, start: point, shape, filled: shapeFilled, erase: mode === "erase" || event.ctrlKey };
+      if (shape === "free") drawLine(point, point, stroke.erase);
+      else showShapePreview(point, point);
     });
     canvas.addEventListener("pointermove", event => {
       if (!stroke || stroke.pointerId !== event.pointerId) return;
       const point = pointAt(event);
-      if (!point) { stroke.point = null; return; }
-      if (stroke.point) drawLine(stroke.point, point, stroke.erase);
-      else drawLine(point, point, stroke.erase);
+      if (!point) { if (stroke.shape === "free") stroke.point = null; return; }
+      if (stroke.shape === "free") {
+        if (stroke.point) drawLine(stroke.point, point, stroke.erase);
+        else drawLine(point, point, stroke.erase);
+      } else showShapePreview(stroke.start, point);
       stroke.point = point;
     });
-    canvas.addEventListener("pointerup", event => { if (stroke?.pointerId === event.pointerId) finishStroke(); });
+    canvas.addEventListener("pointerup", event => { if (stroke?.pointerId === event.pointerId) finishStroke(pointAt(event)); });
     canvas.addEventListener("pointercancel", event => { if (stroke?.pointerId === event.pointerId) finishStroke(); });
     canvas.addEventListener("keydown", event => {
       if (!(event.ctrlKey || event.metaKey)) return;
@@ -264,6 +395,29 @@
     document.querySelector("#zoom-out").addEventListener("click", () => setZoom(zoom - 0.1));
     document.querySelector("#zoom-in").addEventListener("click", () => setZoom(zoom + 0.1));
     document.querySelector("#zoom-reset").addEventListener("click", () => setZoom(1));
+    document.querySelector("#theme-toggle").addEventListener("click", event => {
+      const button = event.currentTarget, dark = document.documentElement.dataset.theme !== "dark";
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      button.textContent = dark ? "☀️ 白天模式" : "🌙 夜间模式";
+      button.setAttribute("aria-label", dark ? "切换到白天模式" : "切换到夜间模式");
+      button.setAttribute("aria-pressed", String(dark));
+    });
+    function updateShapeControls() {
+      const shape = document.querySelector("#shape-tool").value;
+      document.querySelector("#shape-outline").disabled = shape === "free";
+      document.querySelector("#shape-fill").disabled = shape === "free" || shape === "line";
+    }
+    document.querySelector("#shape-tool").addEventListener("change", updateShapeControls);
+    updateShapeControls();
+    function setShapeStyle(filled) {
+      shapeFilled = filled;
+      document.querySelector("#shape-outline").classList.toggle("active", !filled);
+      document.querySelector("#shape-outline").setAttribute("aria-pressed", String(!filled));
+      document.querySelector("#shape-fill").classList.toggle("active", filled);
+      document.querySelector("#shape-fill").setAttribute("aria-pressed", String(filled));
+    }
+    document.querySelector("#shape-outline").addEventListener("click", () => setShapeStyle(false));
+    document.querySelector("#shape-fill").addEventListener("click", () => setShapeStyle(true));
     function setMode(next) {
       mode = next;
       for (const [id, value] of [["#draw-mode", "draw"], ["#erase-mode", "erase"]]) {
