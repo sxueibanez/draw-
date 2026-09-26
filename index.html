@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Braille 画布</title>
+  <style>
+    :root { color-scheme: light; font: 15px/1.5 system-ui, "Microsoft YaHei", sans-serif; color: #20222b; background: #f4f5f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 36px 20px; }
+    main { max-width: 1040px; margin: auto; }
+    header { margin-bottom: 24px; }
+    h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; }
+    header p { margin: 5px 0 0; color: #737784; }
+    section { background: #fff; border: 1px solid #e5e7ec; border-radius: 14px; padding: 18px; margin-bottom: 14px; box-shadow: 0 5px 20px #20222b08; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+    .group { display: flex; align-items: end; gap: 8px; }
+    label { display: grid; gap: 4px; color: #737784; font-size: 12px; }
+    input { width: 76px; height: 38px; border: 1px solid #dfe1e7; border-radius: 8px; padding: 0 10px; font: inherit; }
+    button { height: 38px; border: 1px solid #dfe1e7; border-radius: 8px; background: white; color: inherit; padding: 0 13px; font: inherit; cursor: pointer; }
+    button:hover { border-color: #a9aebb; background: #f8f9fb; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, #canvas:focus-visible { outline: 3px solid #a8b8ff; outline-offset: 2px; }
+    button.primary, button.active { background: #303c76; color: white; border-color: #303c76; }
+    button.primary:hover, button.active:hover { background: #253064; }
+    .spacer { flex: 1; }
+    .hint, .status { color: #737784; font-size: 13px; }
+    .hint { margin: 12px 2px 0; }
+    .status { min-height: 20px; margin-top: 8px; }
+    .canvas-wrap { overflow: auto; max-height: 62vh; background: #fafbfc; border: 1px solid #e8eaf0; border-radius: 10px; padding: 16px; }
+    #canvas { display: grid; width: max-content; font-size: 24px; touch-action: none; cursor: crosshair; user-select: none; }
+    .cell { width: 1em; height: 1.5em; display: grid; place-items: center; border-right: 1px solid #e9ebf0; border-bottom: 1px solid #e9ebf0; color: #303c76; font: 1em/1 "Segoe UI Symbol", "Apple Braille", "DejaVu Sans", monospace; }
+    #output { display: block; width: 100%; min-height: 150px; resize: vertical; border: 1px solid #e5e7ec; border-radius: 9px; padding: 12px; color: #303c76; font: 16px/1.5 "Segoe UI Symbol", "Apple Braille", "DejaVu Sans", monospace; white-space: pre; overflow: auto; }
+    .output-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    h2 { margin: 0; font-size: 16px; }
+    @media (max-width: 620px) { body { padding: 24px 12px; } section { padding: 14px; } .spacer { display: none; } #canvas { font-size: 21px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Braille 画布 <span aria-hidden="true">⣿</span></h1>
+      <p>用鼠标或触屏绘制 Braille 点阵，并复制为 Unicode 字符画。</p>
+    </header>
+
+    <section aria-label="画布工具">
+      <form class="toolbar" id="size-form">
+        <div class="group">
+          <label>宽度（字符）<input id="width" type="number" min="1" max="100" value="48" required></label>
+          <label>高度（字符）<input id="height" type="number" min="1" max="50" value="20" required></label>
+          <button type="submit">调整画布</button>
+        </div>
+        <div class="group" aria-label="绘图模式">
+          <button type="button" class="active" id="draw-mode" aria-pressed="true">绘制</button>
+          <button type="button" id="erase-mode" aria-pressed="false">擦除</button>
+        </div>
+        <div class="group">
+          <button type="button" id="undo" title="撤销（Ctrl+Z）">撤销</button>
+          <button type="button" id="redo" title="重做（Ctrl+Shift+Z）">重做</button>
+          <button type="button" id="clear">清空</button>
+          <button type="button" class="primary" id="copy">复制字符画</button>
+        </div>
+      </form>
+      <p class="hint">拖动绘制；按住 Ctrl 可临时擦除。快捷键：Ctrl+Z 撤销，Ctrl+Shift+Z 重做。</p>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section>
+      <div class="canvas-wrap">
+        <div id="canvas" role="grid" tabindex="0" aria-label="Braille 绘图画布"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="output-head">
+        <h2>字符画</h2>
+        <div class="group">
+          <button type="button" id="download">下载 .txt</button>
+        </div>
+      </div>
+      <textarea id="output" readonly aria-label="生成的 Braille 字符画"></textarea>
+    </section>
+  </main>
+
+  <script>
+    const base = 0x2800;
+    const bits = [[1, 8], [2, 16], [4, 32], [64, 128]];
+    const canvas = document.querySelector("#canvas");
+    const output = document.querySelector("#output");
+    const status = document.querySelector("#status");
+    let width = 48, height = 20, pixels = new Uint8Array(width * height);
+    let undoStack = [], redoStack = [], mode = "draw", stroke = null;
+
+    function charAt(i) { return String.fromCodePoint(base + pixels[i]); }
+    function textArt() {
+      return Array.from({ length: height }, (_, y) =>
+        Array.from({ length: width }, (_, x) => charAt(y * width + x)).join("")
+      ).join("\n");
+    }
+    function trimmedTextArt() {
+      let left = width, top = height, right = -1, bottom = -1;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if (pixels[y * width + x]) {
+          left = Math.min(left, x); right = Math.max(right, x);
+          top = Math.min(top, y); bottom = Math.max(bottom, y);
+        }
+      }
+      if (right < 0) return "";
+      return Array.from({ length: bottom - top + 1 }, (_, row) =>
+        Array.from({ length: right - left + 1 }, (_, col) => charAt((top + row) * width + left + col)).join("")
+      ).join("\n");
+    }
+    function renderAll() {
+      canvas.style.gridTemplateColumns = `repeat(${width}, 1em)`;
+      const cells = document.createDocumentFragment();
+      for (let i = 0; i < pixels.length; i++) {
+        const cell = document.createElement("span");
+        cell.className = "cell";
+        cell.setAttribute("role", "gridcell");
+        cell.setAttribute("aria-label", `第${Math.floor(i / width) + 1}行，第${i % width + 1}列`);
+        cell.textContent = charAt(i);
+        cells.append(cell);
+      }
+      canvas.replaceChildren(cells);
+      output.value = textArt();
+      document.querySelector("#undo").disabled = !undoStack.length;
+      document.querySelector("#redo").disabled = !redoStack.length;
+    }
+    function remember(stack, state) {
+      stack.push(state);
+      if (stack.length > 50) stack.shift();
+    }
+    function setDot(x, y, erase) {
+      const cellX = Math.floor(x / 2), cellY = Math.floor(y / 4);
+      const i = cellY * width + cellX, bit = bits[y % 4][x % 2];
+      const next = erase ? pixels[i] & ~bit : pixels[i] | bit;
+      if (next !== pixels[i]) {
+        pixels[i] = next;
+        canvas.children[i].textContent = charAt(i);
+      }
+    }
+    function drawLine(a, b, erase) {
+      let [x, y] = a, [endX, endY] = b;
+      const dx = Math.abs(endX - x), sx = x < endX ? 1 : -1;
+      const dy = -Math.abs(endY - y), sy = y < endY ? 1 : -1;
+      let error = dx + dy;
+      while (true) {
+        setDot(x, y, erase);
+        if (x === endX && y === endY) break;
+        const twice = 2 * error;
+        if (twice >= dy) { error += dy; x += sx; }
+        if (twice <= dx) { error += dx; y += sy; }
+      }
+    }
+    function pointAt(event) {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left, y = event.clientY - rect.top;
+      if (x < 0 || y < 0 || x >= rect.width || y >= rect.height) return null;
+      return [Math.floor(x / rect.width * width * 2), Math.floor(y / rect.height * height * 4)];
+    }
+    function finishStroke() {
+      if (!stroke) return;
+      if (stroke.before.some((value, i) => value !== pixels[i])) {
+        remember(undoStack, stroke.before);
+        redoStack = [];
+        output.value = textArt();
+        renderHistoryButtons();
+      }
+      stroke = null;
+    }
+    function renderHistoryButtons() {
+      document.querySelector("#undo").disabled = !undoStack.length;
+      document.querySelector("#redo").disabled = !redoStack.length;
+    }
+    function undo() {
+      finishStroke();
+      if (!undoStack.length) return;
+      remember(redoStack, pixels);
+      pixels = undoStack.pop();
+      renderAll();
+    }
+    function redo() {
+      finishStroke();
+      if (!redoStack.length) return;
+      remember(undoStack, pixels);
+      pixels = redoStack.pop();
+      renderAll();
+    }
+
+    canvas.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+      const point = pointAt(event);
+      if (!point) return;
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      stroke = { pointerId: event.pointerId, before: pixels.slice(), point, erase: mode === "erase" || event.ctrlKey };
+      drawLine(point, point, stroke.erase);
+    });
+    canvas.addEventListener("pointermove", event => {
+      if (!stroke || stroke.pointerId !== event.pointerId) return;
+      const point = pointAt(event);
+      if (!point) { stroke.point = null; return; }
+      if (stroke.point) drawLine(stroke.point, point, stroke.erase);
+      else drawLine(point, point, stroke.erase);
+      stroke.point = point;
+    });
+    canvas.addEventListener("pointerup", event => { if (stroke?.pointerId === event.pointerId) finishStroke(); });
+    canvas.addEventListener("pointercancel", event => { if (stroke?.pointerId === event.pointerId) finishStroke(); });
+    canvas.addEventListener("keydown", event => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+    });
+
+    document.querySelector("#size-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const nextWidth = Number(document.querySelector("#width").value);
+      const nextHeight = Number(document.querySelector("#height").value);
+      if (nextWidth === width && nextHeight === height) return;
+      finishStroke();
+      width = nextWidth; height = nextHeight;
+      pixels = new Uint8Array(width * height);
+      undoStack = []; redoStack = [];
+      renderAll();
+      status.textContent = `画布已调整为 ${width} × ${height}。`;
+    });
+    document.querySelector("#draw-mode").addEventListener("click", () => setMode("draw"));
+    document.querySelector("#erase-mode").addEventListener("click", () => setMode("erase"));
+    function setMode(next) {
+      mode = next;
+      for (const [id, value] of [["#draw-mode", "draw"], ["#erase-mode", "erase"]]) {
+        const button = document.querySelector(id);
+        button.classList.toggle("active", mode === value);
+        button.setAttribute("aria-pressed", String(mode === value));
+      }
+    }
+    document.querySelector("#undo").addEventListener("click", undo);
+    document.querySelector("#redo").addEventListener("click", redo);
+    document.querySelector("#clear").addEventListener("click", () => {
+      finishStroke();
+      if (!pixels.some(Boolean)) return;
+      remember(undoStack, pixels.slice());
+      pixels.fill(0); redoStack = [];
+      renderAll();
+      status.textContent = "画布已清空。";
+    });
+    document.querySelector("#copy").addEventListener("click", async () => {
+      const copyText = trimmedTextArt();
+      try {
+        await navigator.clipboard.writeText(copyText);
+        status.textContent = copyText ? "已裁掉四周空白并复制。" : "画布为空，复制内容为空。";
+      } catch {
+        const temporary = document.createElement("textarea");
+        temporary.value = copyText;
+        temporary.style.position = "fixed";
+        temporary.style.opacity = "0";
+        document.body.append(temporary);
+        temporary.select();
+        const copied = document.execCommand("copy");
+        temporary.remove();
+        if (copied) status.textContent = copyText ? "已裁掉四周空白并复制。" : "画布为空，复制内容为空。";
+        else {
+          output.value = copyText;
+          output.focus(); output.select();
+          status.textContent = "请按 Ctrl+C 复制已裁剪的字符画。";
+        }
+      }
+    });
+    document.querySelector("#download").addEventListener("click", () => {
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(new Blob([textArt()], { type: "text/plain;charset=utf-8" }));
+      link.href = url;
+      link.download = "braille-art.txt";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    renderAll();
+  </script>
+</body>
+</html>
